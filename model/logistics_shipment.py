@@ -2,6 +2,7 @@ from sqlalchemy import Column, String, DateTime, Integer, Boolean
 from db.database import Base
 
 
+# todo - 실제 데이터 만큼 스케일 업
 class LogisticsShipment(Base):
     __tablename__ = 'logistics_shipments'
 
