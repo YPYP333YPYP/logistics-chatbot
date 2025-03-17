@@ -1,10 +1,13 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from model import carrier, shipping
-from db.database import init_db, close_db
+from uvicorn import Config, Server
 
+from model import carrier, logistics_shipment
+from db.database import init_db, close_db
+from api.routes import router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -34,6 +37,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(router)
+
+async def run_server():
+    config = Config(app=app, host="127.0.0.1", port=8000, log_level="debug")
+    server = Server(config=config)
+
+    await server.serve()
+
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    asyncio.run(run_server())

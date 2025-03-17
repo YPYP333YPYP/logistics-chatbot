@@ -1,3 +1,5 @@
+from typing import AsyncGenerator
+
 import pymysql
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
@@ -49,10 +51,12 @@ def create_database_if_not_exists():
 
 
 # 비동기 데이터베이스 세션 의존성
-async def async_get_db():
+async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
     async with local_session() as session:
-        yield session
-
+        try:
+            yield session
+        finally:
+            await session.close()
 
 
 # 데이터베이스 초기화 함수
@@ -72,8 +76,5 @@ async def init_db():
 
 # 데이터베이스 종료 함수
 async def close_db():
-    """
-    애플리케이션 종료 시 데이터베이스 연결 종료
-    """
     print("close db")
     await async_engine.dispose()
