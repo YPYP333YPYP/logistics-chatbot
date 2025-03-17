@@ -1,10 +1,9 @@
 import json
 import os
-import shutil
+
 from datetime import datetime
 from typing import List
-
-from fastapi import Depends, UploadFile
+from fastapi import Depends
 from pyxlsb import open_workbook
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,7 +42,7 @@ class DataService:
             # Cell 객체에서 값(v) 추출
             headers = [cell.v if hasattr(cell, 'v') else None for cell in header_row]
             # 4번째 행(인덱스 3)부터 데이터
-            rows = data[3:5]  # 모든 데이터 행 처리
+            rows = data[3:]  # 모든 데이터 행 처리
 
             # 각 행을 딕셔너리로 변환
             for row in rows:
