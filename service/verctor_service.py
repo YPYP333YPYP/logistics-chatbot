@@ -59,3 +59,40 @@ class VectorService:
             self.vector_store = None
             print("벡터 스토어가 존재하지 않습니다. 데이터 처리 후 새로 생성됩니다.")
 
+    async def fetch_shipment_data(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        RDB에서 물류 화물 데이터 비동기 조회
+
+        Args:
+            limit (int, optional): 조회할 최대 레코드 수
+
+        Returns:
+            List[Dict[str, Any]]: 화물 데이터 목록
+        """
+        # SQLAlchemy 2.0 스타일로 쿼리 구성
+        query = select(LogisticsShipment)
+
+        # 제한이 있으면 적용
+        if limit:
+            query = query.limit(limit)
+
+        # 쿼리 실행
+        result = await self.session.execute(query)
+        shipments_orm = result.scalars().all()
+
+        # ORM 객체를 딕셔너리로 변환
+        shipments = []
+        for shipment in shipments_orm:
+            # __dict__를 통해 객체 속성을 딕셔너리로 변환
+            shipment_dict = {k: v for k, v in shipment.__dict__.items() if not k.startswith('_')}
+
+            # 날짜/시간 객체 문자열로 변환
+            for key, value in shipment_dict.items():
+                if isinstance(value, datetime):
+                    shipment_dict[key] = value.isoformat()
+
+            shipments.append(shipment_dict)
+
+        return shipments
+
+
