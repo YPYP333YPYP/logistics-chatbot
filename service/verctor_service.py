@@ -231,3 +231,23 @@ class VectorService:
         self.vector_store.persist()
         print(f"{len(chunks)}개의 새로운 청크가 벡터 스토어에 추가되었습니다.")
 
+    def search_similar_documents(self, query: str, k: int = 5) -> List[Document]:
+        """
+        쿼리와 유사한 문서 검색
+
+        Args:
+            query (str): 검색 쿼리
+            k (int): 반환할 문서 수
+
+        Returns:
+            List[Document]: 유사한 문서 목록
+        """
+        if self.vector_store is None:
+            print("벡터 스토어가 초기화되지 않았습니다. 먼저 process_and_build_vector_store()를 실행하세요.")
+            return []
+
+        # 벡터 스토어에서 유사 문서 검색
+        docs = self.vector_store.similarity_search(query, k=k)
+        return docs
+
+
