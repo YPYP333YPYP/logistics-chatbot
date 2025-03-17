@@ -251,3 +251,43 @@ class VectorService:
         return docs
 
 
+    def search_with_filter(self, query: str, filter_dict: Dict[str, Any], k: int = 5) -> List[Document]:
+        """
+        필터를 적용하여 문서 검색
+
+        Args:
+            query (str): 검색 쿼리
+            filter_dict (Dict): 필터 조건 (메타데이터 기반)
+            k (int): 반환할 문서 수
+
+        Returns:
+            List[Document]: 필터링된 유사한 문서 목록
+        """
+        if self.vector_store is None:
+            print("벡터 스토어가 초기화되지 않았습니다. 먼저 process_and_build_vector_store()를 실행하세요.")
+            return []
+
+        # Chroma 필터 형식으로 변환 (수정된 부분)
+        if len(filter_dict) > 1:
+            # 여러 조건이 있는 경우 $and 연산자 사용
+            filter_conditions = []
+            for key, value in filter_dict.items():
+                filter_conditions.append({key: {"$eq": value}})
+            chroma_filter = {"$and": filter_conditions}
+        elif len(filter_dict) == 1:
+            # 단일 조건인 경우 직접 사용
+            key, value = next(iter(filter_dict.items()))
+            chroma_filter = {key: {"$eq": value}}
+        else:
+            # 필터가 없는 경우
+            chroma_filter = None
+
+        # 벡터 스토어에서 필터링된 유사 문서 검색
+        docs = self.vector_store.similarity_search(
+            query,
+            k=k,
+            filter=chroma_filter
+        )
+        return docs
+
+
