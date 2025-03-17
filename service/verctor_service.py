@@ -290,4 +290,24 @@ class VectorService:
         )
         return docs
 
+    async def export_structured_data(self, output_path: str = "./data/structured_data"):
+        """
+        RDB 데이터를 구조화된 형태로 내보내기 (비동기)
 
+        Args:
+            output_path (str): 출력 파일 저장 경로
+        """
+        os.makedirs(output_path, exist_ok=True)
+
+        # 화물 데이터 내보내기
+        shipments = await self.fetch_shipment_data()
+        with open(os.path.join(output_path, "shipments.json"), "w", encoding="utf-8") as f:
+            json.dump(shipments, f, ensure_ascii=False, indent=2)
+
+        # 데이터프레임으로 변환하여 CSV로도 저장
+        shipments_df = pd.DataFrame(shipments)
+        shipments_df.to_csv(os.path.join(output_path, "shipments.csv"), index=False, encoding="utf-8")
+
+        print(f"구조화된 데이터가 {output_path}에 저장되었습니다.")
+
+    # TODO: 컨테이너, 스케줄, 항구, 선사 등의 데이터 처리 메서드 구현 예정
