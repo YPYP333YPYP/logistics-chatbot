@@ -95,4 +95,58 @@ class VectorService:
 
         return shipments
 
+    def convert_shipment_to_document(self, shipment: Dict[str, Any]) -> Document:
+        """
+        화물 데이터를 Document 객체로 변환
+
+        Args:
+            shipment (Dict[str, Any]): 화물 데이터
+
+        Returns:
+            Document: 변환된 Document 객체
+        """
+        # 화물 정보를 문자열로 구성
+        content = f"""
+      화물 ID: {shipment.get('lss_id', '')}
+      화물 이름: {shipment.get('lss_name', '')}
+      현재 상태: {shipment.get('current_status', '')}
+      현재 위치: {shipment.get('current_location', '')}
+      환적 여부: {'예' if shipment.get('ts_yn') else '아니오'}
+      B/L 번호: HBL-{shipment.get('hbl_no', '')}, MBL-{shipment.get('mbl_no', '')}
+      SR 번호: {shipment.get('sr_no', '')}
+      서비스: {shipment.get('service_nm', '')}
+      출발지: {shipment.get('from_site_name', '')} ({shipment.get('from_site_id', '')})
+      도착지: {shipment.get('to_site_name', '')} ({shipment.get('to_site_id', '')})
+      화주: {shipment.get('shipper_name', '')}
+      수하인: {shipment.get('consignee_nm', '')}
+      물류 경로: {shipment.get('delivery_lane', '')}
+      선적항(POL): {shipment.get('pol_nm', '')} ({shipment.get('pol_nation', '')})
+      도착항(POD): {shipment.get('pod_nm', '')} ({shipment.get('pod_nation', '')})
+      최종 목적지: {shipment.get('fd_nm', '')} ({shipment.get('fd_nation_nm', '')})
+      운송사: {shipment.get('carrier_nm', '')} ({shipment.get('carrier_code', '')})
+      선박/항공편 정보: {shipment.get('pol_vessel_flight_nm', '')} {shipment.get('pol_vessel_flight_no', '')}
+      출항 예정일(최초): {shipment.get('pol_initial_etd', '')}
+      출항 예정일(현재): {shipment.get('pol_as_is_etd', '')}
+      출항일: {shipment.get('pol_atd', '')}
+      도착 예정일(최초): {shipment.get('pod_initial_eta', '')}
+      도착 예정일(현재): {shipment.get('pod_as_is_eta', '')}
+      예상 리드타임(일): {shipment.get('lt_day_pol_atd_pod_as_is_eta', '')}
+      POL 정시 상태: {shipment.get('pol_ontime_status', '')}
+      """
+
+        raw_metadata = {
+            "shipment_id": shipment.get('id'),
+            "lss_id": shipment.get('lss_id'),
+            "current_status": shipment.get('current_status'),
+            "pol": shipment.get('pol_nm'),
+            "pod": shipment.get('pod_nm'),
+            "carrier": shipment.get('carrier_nm'),
+            "ts_yn": shipment.get('ts_yn'),
+            "doc_type": "shipment"
+        }
+
+        # None 값 필터링
+        metadata = {k: (v if v is not None else "") for k, v in raw_metadata.items()}
+
+        return Document(page_content=content, metadata=metadata)
 
