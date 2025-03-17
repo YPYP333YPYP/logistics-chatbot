@@ -189,3 +189,45 @@ class VectorService:
         self.vector_store.persist()
         print("벡터 스토어 구축 및 저장 완료")
 
+    async def update_vector_store(self):
+        """
+        벡터 스토어 증분 업데이트 (비동기)
+        - 새로운 화물 데이터만 추가
+        """
+        if self.vector_store is None:
+            print("벡터 스토어가 초기화되지 않았습니다. 먼저 process_and_build_vector_store()를 실행하세요.")
+            return
+
+        print("벡터 스토어 증분 업데이트 시작...")
+
+        # 기존 문서의 shipment_id 수집
+        existing_ids = set()
+        for metadata in self.vector_store._collection.get()["metadatas"]:
+            if "shipment_id" in metadata:
+                existing_ids.add(metadata["shipment_id"])
+
+        # 모든 화물 데이터 조회
+        all_shipments = await self.fetch_shipment_data()
+
+        # 새로운 화물만 필터링
+        new_shipments = [s for s in all_shipments if s["id"] not in existing_ids]
+        print(f"총 {len(new_shipments)}개의 새로운 화물 데이터 발견")
+
+        if not new_shipments:
+            print("업데이트할 새로운 데이터가 없습니다.")
+            return
+
+        # 문서 변환 및 추가
+        new_docs = []
+        for shipment in new_shipments:
+            doc = self.convert_shipment_to_document(shipment)
+            new_docs.append(doc)
+
+        # 문서 분할
+        chunks = self.text_splitter.split_documents(new_docs)
+
+        # 벡터 스토어에 추가
+        self.vector_store.add_documents(chunks)
+        self.vector_store.persist()
+        print(f"{len(chunks)}개의 새로운 청크가 벡터 스토어에 추가되었습니다.")
+
