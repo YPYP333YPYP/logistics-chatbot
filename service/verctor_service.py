@@ -150,3 +150,42 @@ class VectorService:
 
         return Document(page_content=content, metadata=metadata)
 
+    async def process_and_build_vector_store(self, force_rebuild: bool = False):
+        """
+        RDB 데이터를 처리하고 벡터 스토어 구축 (비동기)
+
+        Args:
+            force_rebuild (bool): 기존 벡터 스토어가 있어도 강제로 재구축할지 여부
+        """
+        # 이미 벡터 스토어가 있고 강제 재구축이 아니면 스킵
+        if self.vector_store is not None and not force_rebuild:
+            print("벡터 스토어가 이미 존재합니다. force_rebuild=True로 설정하여 재구축할 수 있습니다.")
+            return
+
+        print("데이터 수집 및 벡터 스토어 구축 시작...")
+
+        # 화물 데이터 수집 및 문서 변환
+        print("화물 데이터 수집 중...")
+        shipments = await self.fetch_shipment_data()
+        print(f"총 {len(shipments)}개의 화물 데이터 수집 완료")
+
+        shipment_docs = []
+        for shipment in shipments:
+            doc = self.convert_shipment_to_document(shipment)
+            shipment_docs.append(doc)
+
+        # 문서 분할
+        print("문서 분할 중...")
+        chunks = self.text_splitter.split_documents(shipment_docs)
+        print(f"총 {len(chunks)}개의 청크로 분할 완료")
+
+        # 벡터 스토어 구축
+        print("벡터 스토어 구축 중...")
+        self.vector_store = Chroma.from_documents(
+            documents=chunks,
+            embedding=self.embeddings,
+            persist_directory=self.vector_store_path
+        )
+        self.vector_store.persist()
+        print("벡터 스토어 구축 및 저장 완료")
+
