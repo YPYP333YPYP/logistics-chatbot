@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from model import carrier, shipping
+from model import carrier, logistics_shipment
 from db.database import init_db, close_db
 
 
