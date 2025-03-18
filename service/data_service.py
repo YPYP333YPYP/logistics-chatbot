@@ -43,7 +43,7 @@ class DataService:
             headers = [cell.v if hasattr(cell, 'v') else None for cell in header_row]
 
             # 4번째 행(인덱스 3)부터 데이터
-            rows = data[3:]  # 모든 데이터 행 처리
+            rows = data[3:103]  # 데이터 수 제한
 
             # 각 행을 딕셔너리로 변환
             for row in rows:
