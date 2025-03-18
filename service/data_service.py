@@ -1,10 +1,9 @@
 import json
 import os
-import shutil
-from datetime import datetime
-from typing import List
 
-from fastapi import Depends, UploadFile
+from datetime import datetime
+from typing import List, Dict
+from fastapi import Depends
 from pyxlsb import open_workbook
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,10 +39,11 @@ class DataService:
             # 헤더 행(3행)과 데이터 행 분리
             header_row = data[2]  # 3번째 행(인덱스 2)이 컬럼명
 
-            # Cell 객체에서 값(v) 추출
+            # Cell 객체에서 값(v) 추출 - Cell(r(row), c(column), v(value))
             headers = [cell.v if hasattr(cell, 'v') else None for cell in header_row]
+
             # 4번째 행(인덱스 3)부터 데이터
-            rows = data[3:5]  # 모든 데이터 행 처리
+            rows = data[3:103]  # 데이터 수 제한
 
             # 각 행을 딕셔너리로 변환
             for row in rows:
@@ -52,6 +52,7 @@ class DataService:
                     if i < len(headers) and headers[i] is not None:
                         # Cell 객체에서 값 추출
                         value = cell.v if hasattr(cell, 'v') else cell
+
                         # 공백 값 None 처리
                         if value == "":
                             value = None
@@ -62,7 +63,7 @@ class DataService:
                     continue
 
                 # LogisticsShipment 객체로 변환
-                shipment_data = self._convert_to_logistics_shipment(row_dict)
+                shipment_data = self.convert_to_logistics_shipment(row_dict)
                 shipment_list.append(shipment_data)
 
             print(f"총 {len(shipment_list)}개의 레코드가 변환되었습니다.")
@@ -85,7 +86,7 @@ class DataService:
             print(f"엑셀 파일 처리 중 오류: {e}")
             raise
 
-    def _convert_to_logistics_shipment(self, row_dict):
+    def convert_to_logistics_shipment(self, row_dict: Dict):
         """
         엑셀에서 읽은 데이터를 LogisticsShipment 모델 객체로 변환합니다.
 
@@ -119,7 +120,7 @@ class DataService:
                             try:
                                 # 날짜 문자열 파싱
                                 if isinstance(value, str):
-                                    value = self._parse_date_string(value)
+                                    value = self.parse_date_string(value)
                             except Exception as e:
                                 print(f"날짜 변환 오류 ({excel_col}): {e}")
                                 value = None
@@ -140,7 +141,7 @@ class DataService:
 
         return shipment
 
-    def _parse_date_string(self, date_str):
+    def parse_date_string(self, date_str):
         """
         다양한 형식의 날짜 문자열을 datetime 객체로 변환합니다.
 

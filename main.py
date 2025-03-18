@@ -39,10 +39,10 @@ app.add_middleware(
 
 app.include_router(router)
 
+
 async def run_server():
     config = Config(app=app, host="127.0.0.1", port=8000, log_level="debug")
     server = Server(config=config)
-
     await server.serve()
 
 if __name__ == "__main__":
