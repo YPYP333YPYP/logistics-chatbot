@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional
 import pandas as pd
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, inspect, String, Integer, Float, Boolean, DateTime
 from fastapi import Depends
 from langchain.vectorstores import Chroma
 from langchain.embeddings import HuggingFaceEmbeddings
@@ -33,7 +33,10 @@ class VectorService:
             vector_store_path (str): 벡터 스토어 저장 경로
         """
 
+        # 백터 스토어 저장 경로 초기화
         self.vector_store_path = vector_store_path
+
+        # 비동기 세션 초기화
         self.session = session
 
         # 임베딩 모델 초기화
@@ -69,29 +72,79 @@ class VectorService:
         Returns:
             List[Dict[str, Any]]: 화물 데이터 목록
         """
-        # SQLAlchemy 2.0 스타일로 쿼리 구성
         query = select(LogisticsShipment)
-
-        # 제한이 있으면 적용
         if limit:
             query = query.limit(limit)
-
-        # 쿼리 실행
         result = await self.session.execute(query)
         shipments_orm = result.scalars().all()
 
-        # ORM 객체를 딕셔너리로 변환
+        # 모델 컬럼 정보 미리 가져오기
+        mapper = inspect(LogisticsShipment)
+        column_types = {column.key: column.type for column in mapper.columns}
+
         shipments = []
         for shipment in shipments_orm:
-            # __dict__를 통해 객체 속성을 딕셔너리로 변환
-            shipment_dict = {k: v for k, v in shipment.__dict__.items() if not k.startswith('_')}
+            shipment_dict = {}
 
-            # 날짜/시간 객체 문자열로 변환
+            # 모든 속성 순회
+            for key, value in shipment.__dict__.items():
+                # 내부 속성 제외
+                if key.startswith('_'):
+                    continue
+
+                # None 값 처리
+                if value is None:
+                    # 컬럼 타입 확인
+                    if key in column_types:
+                        column_type = column_types[key]
+
+                        # 컬럼 타입에 따른 기본값 설정
+                        if isinstance(column_type, String):
+                            shipment_dict[key] = "없음"
+                        elif isinstance(column_type, Integer):
+                            shipment_dict[key] = 0
+                        elif isinstance(column_type, Float):
+                            shipment_dict[key] = 0.0
+                        elif isinstance(column_type, Boolean):
+                            shipment_dict[key] = False
+                        elif isinstance(column_type, DateTime):
+                            shipment_dict[key] = "1970-01-01T00:00:00"
+                        else:
+                            # 기타 타입은 빈 문자열로 설정
+                            shipment_dict[key] = ""
+                    else:
+                        # 컬럼 정보가 없는 경우 빈 문자열로 설정
+                        shipment_dict[key] = ""
+                else:
+                    # None이 아닌 값 처리
+                    if isinstance(value, datetime):
+                        # 날짜 객체는 ISO 형식 문자열로 변환
+                        shipment_dict[key] = value.isoformat()
+                    else:
+                        # 기타 타입은 그대로 저장
+                        shipment_dict[key] = value
+
+            # 임베딩 생성 전 데이터 유효성 확인
             for key, value in shipment_dict.items():
-                if isinstance(value, datetime):
-                    shipment_dict[key] = value.isoformat()
+                if value == "":
+                    # 핵심 필드의 빈 문자열 처리
+                    if key in ['lss_id', 'lss_name', 'current_status']:
+                        shipment_dict[key] = f"unknown_{key}"
 
+            # 결과 리스트에 추가
             shipments.append(shipment_dict)
+
+        # 벡터 임베딩 생성 전 최종 확인
+        for shipment in shipments:
+            # 필수 필드가 비어있는지 확인
+            if 'lss_id' not in shipment or not shipment['lss_id']:
+                shipment['lss_id'] = f"default_id_{shipment.get('id', 'unknown')}"
+
+            # 벡터 임베딩에 사용될 텍스트 필드 전처리
+            text_fields = ['lss_name', 'current_status', 'current_location', 'service_nm']
+            for field in text_fields:
+                if field in shipment and (not shipment[field] or shipment[field] == ""):
+                    shipment[field] = "정보_없음"
 
         return shipments
 
@@ -311,3 +364,126 @@ class VectorService:
         print(f"구조화된 데이터가 {output_path}에 저장되었습니다.")
 
     # TODO: 컨테이너, 스케줄, 항구, 선사 등의 데이터 처리 메서드 구현 예정
+
+
+# main.py 테스트 코드
+async def vector_service_lss_example():
+    """LSS ID 기반 물류 검색 예제 함수"""
+
+    # 비동기 세션 생성
+    async for session in async_get_db():
+        # 벡터 서비스 초기화
+        vector_service = VectorService(session=session)
+
+        # 벡터 스토어가 없으면 구축
+        if vector_service.vector_store is None:
+            print("벡터 스토어 구축 중...")
+            await vector_service.process_and_build_vector_store()
+
+        # 예제 1: LSS ID로 특정 화물 검색
+        lss_id = "T523"
+        query1 = f"{lss_id} 화물의 현재 위치와 상태"
+
+        print(f"\n===== {lss_id} 화물 검색 결과 =====")
+        docs1 = vector_service.search_similar_documents(query1, k=2)
+        for i, doc in enumerate(docs1, 1):
+            print(f"\n결과 {i}:")
+            print(f"내용: {doc.page_content[:200]}...")
+            print(f"메타데이터: {doc.metadata}")
+
+        # 예제 2: LSS ID와 함께 필터링 (특정 화물의 환적 정보)
+        filter_query1 = {
+            "lss_id": lss_id,
+            "ts_yn": True
+        }
+
+        print(f"\n===== {lss_id} 환적 화물 필터 검색 결과 =====")
+        try:
+            # 여러 조건의 필터 검색 - 수정된 방식 적용
+            filter_conditions = []
+            for key, value in filter_query1.items():
+                filter_conditions.append({key: {"$eq": value}})
+
+            chroma_filter = {"$and": filter_conditions}
+
+            filtered_docs1 = vector_service.vector_store.similarity_search(
+                "환적 정보",
+                k=2,
+                filter=chroma_filter
+            )
+
+            for i, doc in enumerate(filtered_docs1, 1):
+                print(f"\n결과 {i}:")
+                print(f"내용: {doc.page_content[:200]}...")
+                print(f"메타데이터: {doc.metadata}")
+        except Exception as e:
+            print(f"필터 검색 오류: {e}")
+            print("단일 필터 검색으로 시도합니다...")
+            # 단일 필터로 시도
+            docs = vector_service.search_with_filter(
+                "환적 정보",
+                {"lss_id": lss_id},
+                k=2
+            )
+            for i, doc in enumerate(docs, 1):
+                print(f"\n결과 {i}:")
+                print(f"내용: {doc.page_content[:200]}...")
+                print(f"메타데이터: {doc.metadata}")
+
+        # 예제 3: 두 개의 LSS ID 비교 검색
+        other_lss_id = "514A"
+        query2 = f"{lss_id}와 {other_lss_id} 화물의 운송 경로 비교"
+
+        print(f"\n===== {lss_id}와 {other_lss_id} 비교 검색 결과 =====")
+        docs2 = vector_service.search_similar_documents(query2, k=3)
+        for i, doc in enumerate(docs2, 1):
+            print(f"\n결과 {i}:")
+            print(f"내용: {doc.page_content[:200]}...")
+            print(f"메타데이터: {doc.metadata}")
+
+        # 예제 4: 특정 LSS ID 화물의 출항 지연 여부 확인
+        query3 = f"{lss_id} 화물의 출항 예정일과 실제 출항일 비교"
+
+        print(f"\n===== {lss_id} 출항 지연 여부 검색 결과 =====")
+        docs3 = vector_service.search_similar_documents(query3, k=2)
+        for i, doc in enumerate(docs3, 1):
+            print(f"\n결과 {i}:")
+            print(f"내용: {doc.page_content[:200]}...")
+            print(f"메타데이터: {doc.metadata}")
+
+            # 출항 지연 여부 분석
+            if "pol_initial_etd" in doc.page_content and "pol_atd" in doc.page_content:
+                print("\n[출항 지연 분석]")
+                print("최초 출항 예정일과 실제 출항일 정보가 있습니다.")
+                print("지연 여부를 확인하려면 날짜를 비교하세요.")
+
+        # 예제 5: 특정 LSS ID 화물과 동일 선박에 실린 다른 화물 검색
+        # 먼저 해당 LSS ID의 선박 정보 찾기
+        vessel_query = f"{lss_id} 화물의 선박 정보"
+        vessel_docs = vector_service.search_similar_documents(vessel_query, k=1)
+
+        if vessel_docs:
+            # 선박 정보 추출 시도
+            vessel_info = None
+            doc_content = vessel_docs[0].page_content
+            vessel_lines = [line for line in doc_content.split('\n') if "선박/항공편 정보" in line]
+
+            if vessel_lines:
+                vessel_info = vessel_lines[0].split(":")[-1].strip()
+                print(f"\n===== {lss_id} 화물과 동일 선박({vessel_info})에 실린 화물 검색 =====")
+
+                if vessel_info and vessel_info != "":
+                    same_vessel_query = f"{vessel_info} 선박에 실린 화물 목록"
+                    same_vessel_docs = vector_service.search_similar_documents(same_vessel_query, k=3)
+
+                    for i, doc in enumerate(same_vessel_docs, 1):
+                        print(f"\n결과 {i}:")
+                        print(f"내용: {doc.page_content[:200]}...")
+                        print(f"메타데이터: {doc.metadata}")
+                else:
+                    print(f"선박 정보를 찾을 수 없습니다.")
+            else:
+                print(f"선박 정보를 찾을 수 없습니다.")
+
+        # 한 번만 실행
+        break
