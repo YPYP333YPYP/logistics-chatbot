@@ -203,12 +203,13 @@ class VectorService:
 
         return Document(page_content=content, metadata=metadata)
 
-    async def process_and_build_vector_store(self, force_rebuild: bool = False):
+    async def process_and_build_vector_store(self, limit: Optional[int] = None, force_rebuild: bool = False):
         """
         RDB 데이터를 처리하고 벡터 스토어 구축 (비동기)
 
         Args:
             force_rebuild (bool): 기존 벡터 스토어가 있어도 강제로 재구축할지 여부
+            limit (int, optional): 조회할 최대 레코드 수
         """
         # 이미 벡터 스토어가 있고 강제 재구축이 아니면 스킵
         if self.vector_store is not None and not force_rebuild:
@@ -219,7 +220,7 @@ class VectorService:
 
         # 화물 데이터 수집 및 문서 변환
         print("화물 데이터 수집 중...")
-        shipments = await self.fetch_shipment_data()
+        shipments = await self.fetch_shipment_data(limit)
         print(f"총 {len(shipments)}개의 화물 데이터 수집 완료")
 
         shipment_docs = []
@@ -244,11 +245,11 @@ class VectorService:
 
     async def update_vector_store(self):
         """
-        벡터 스토어 증분 업데이트 (비동기)
+        벡터 스토어 증분 업데이트
         - 새로운 화물 데이터만 추가
         """
         if self.vector_store is None:
-            print("벡터 스토어가 초기화되지 않았습니다. 먼저 process_and_build_vector_store()를 실행하세요.")
+            print("벡터 스토어가 초기화되지 않았습니다.")
             return
 
         print("벡터 스토어 증분 업데이트 시작...")
@@ -284,6 +285,8 @@ class VectorService:
         self.vector_store.persist()
         print(f"{len(chunks)}개의 새로운 청크가 벡터 스토어에 추가되었습니다.")
 
+        return len(chunks)
+
     def search_similar_documents(self, query: str, k: int = 5) -> List[Document]:
         """
         쿼리와 유사한 문서 검색
@@ -296,13 +299,12 @@ class VectorService:
             List[Document]: 유사한 문서 목록
         """
         if self.vector_store is None:
-            print("벡터 스토어가 초기화되지 않았습니다. 먼저 process_and_build_vector_store()를 실행하세요.")
+            print("벡터 스토어가 초기화되지 않았습니다.")
             return []
 
         # 벡터 스토어에서 유사 문서 검색
         docs = self.vector_store.similarity_search(query, k=k)
         return docs
-
 
     def search_with_filter(self, query: str, filter_dict: Dict[str, Any], k: int = 5) -> List[Document]:
         """
