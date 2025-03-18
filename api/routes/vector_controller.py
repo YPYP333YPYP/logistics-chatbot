@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, Body, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Body, HTTPException, Query
 
 from schema.vector_schema import RebuildModel
 from service.vector_service import VectorService
@@ -60,3 +62,27 @@ async def update_vector_store(
         return {"message": message}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"벡터 스토어 업데이트 중 오류 발생: {str(e)}")
+
+
+@router.get("/export")
+async def export_data(
+        output_path: Optional[str] = Query("./data/structured_data"),
+        vector_service: VectorService = Depends()
+):
+    """
+    구조화된 데이터 내보내기 API
+
+    Args:
+        output_path: 출력 파일 저장 경로
+
+    Returns:
+        내보내기 결과 메시지
+    """
+    try:
+        await vector_service.export_structured_data(output_path)
+        return {
+            "message": "구조화된 데이터 내보내기 완료",
+            "output_path": output_path
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"데이터 내보내기 중 오류 발생: {str(e)}")
