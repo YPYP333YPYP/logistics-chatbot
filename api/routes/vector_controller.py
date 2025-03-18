@@ -2,7 +2,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Body, HTTPException, Query
 
-from schema.vector_schema import RebuildModel
+from schema.vector_schema import RebuildModel, QueryModel
 from service.vector_service import VectorService
 
 router = APIRouter(
@@ -113,3 +113,49 @@ async def check_vector_store_status(
         return status_info
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"벡터 스토어 상태 확인 중 오류 발생: {str(e)}")
+
+
+@router.post("/search")
+async def search_documents(
+        query_model: QueryModel,
+        vector_service: VectorService = Depends(VectorService)
+):
+    """
+    쿼리와 유사한 문서 검색 API
+
+    Args:
+        query_model: 검색 쿼리, 결과 수, 필터 조건을 포함하는 모델
+
+    Returns:
+        검색 결과 목록
+    """
+    try:
+        if vector_service.vector_store is None:
+            # 벡터 스토어가 초기화되지 않은 경우 자동 구축
+            await vector_service.process_and_build_vector_store()
+
+        if query_model.filter_dict:
+            # 필터가 있는 경우 필터 검색 실행
+            docs = vector_service.search_with_filter(
+                query_model.query,
+                query_model.filter_dict,
+                query_model.k
+            )
+        else:
+            # 일반 검색 실행
+            docs = vector_service.search_similar_documents(
+                query_model.query,
+                query_model.k
+            )
+
+        # Document 객체를 dict로 변환하여 반환
+        results = []
+        for doc in docs:
+            results.append({
+                "content": doc.page_content,
+                "metadata": doc.metadata
+            })
+
+        return {"results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"검색 중 오류 발생: {str(e)}")
