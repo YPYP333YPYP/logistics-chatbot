@@ -67,7 +67,7 @@ async def update_vector_store(
 @router.get("/export")
 async def export_data(
         output_path: Optional[str] = Query("./data/structured_data"),
-        vector_service: VectorService = Depends()
+        vector_service: VectorService = Depends(VectorService)
 ):
     """
     구조화된 데이터 내보내기 API
@@ -86,3 +86,30 @@ async def export_data(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"데이터 내보내기 중 오류 발생: {str(e)}")
+
+
+@router.get("/status")
+async def check_vector_store_status(
+        vector_service: VectorService = Depends(VectorService)
+):
+    """
+    벡터 스토어 상태 확인 API
+
+    Returns:
+        벡터 스토어 상태 정보
+    """
+    try:
+        is_initialized = vector_service.vector_store is not None
+
+        status_info = {
+            "initialized": is_initialized,
+        }
+
+        if is_initialized:
+            document_count = vector_service.vector_store._collection.count()
+            status_info["document_count"] = document_count
+            status_info["path"] = vector_service.vector_store._persist_directory
+
+        return status_info
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"벡터 스토어 상태 확인 중 오류 발생: {str(e)}")
