@@ -37,3 +37,26 @@ async def build_vector_store(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"벡터 스토어 구축 중 오류 발생: {str(e)}")
+
+
+@router.post("/update")
+async def update_vector_store(
+        vector_service: VectorService = Depends(VectorService)
+):
+    """
+    벡터 스토어 증분 업데이트 API
+
+    Returns:
+        업데이트 결과 메시지
+    """
+    try:
+        if vector_service.vector_store is None:
+            await vector_service.process_and_build_vector_store()
+            message = "벡터 스토어가 존재하지 않아 새로 구축합니다."
+        else:
+            await vector_service.update_vector_store()
+            message = "벡터 스토어 증분 업데이트 완료"
+
+        return {"message": message}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"벡터 스토어 업데이트 중 오류 발생: {str(e)}")
