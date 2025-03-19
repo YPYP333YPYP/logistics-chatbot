@@ -1,4 +1,3 @@
-# 라우터 생성
 import os
 import shutil
 import traceback
@@ -73,18 +72,3 @@ async def upload_excel_file(
         error_detail = str(e)
         print(f"파일 처리 중 오류: {error_detail}")
         print(traceback.format_exc())
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"파일 처리 중 오류가 발생했습니다: {error_detail}"
-        )
-
-    finally:
-        # 자동 삭제 옵션이 활성화되어 있다면 파일 삭제
-        if os.getenv('AUTO_DELETE_UPLOADS', 'false').lower() == 'true':
-            try:
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                    print(f"임시 파일 삭제: {file_path}")
-            except Exception as e:
-                print(f"파일 삭제 중 오류: {e}")
