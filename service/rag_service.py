@@ -1,5 +1,6 @@
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, desc, and_, or_, text
 
 from db.database import async_get_db
 
@@ -9,8 +10,6 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 
 # 데이터베이스 관련 임포트
-from sqlalchemy import create_engine, func, desc, and_, or_, text
-from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.sql.expression import case
 
 # 벡터 스토어 및 임베딩 관련 임포트
@@ -169,7 +168,7 @@ class RAGService:
             chain_type_kwargs={"prompt": PROMPT}
         )
 
-    def query(self, question: str) -> Dict[str, Any]:
+    async def query(self, question: str) -> Dict[str, Any]:
         """
         질문에 대한 답변 검색
 
@@ -185,7 +184,7 @@ class RAGService:
         # 의도에 따른 관련 문서 검색 (하이브리드 검색)
         additional_docs = []
         if intent:
-            db_results = self._get_db_results_by_intent(intent, question)
+            db_results = await self._get_db_results_by_intent(intent, question)
             if db_results:
                 additional_docs = [Document(page_content=str(r), metadata={"source": "database"}) for r in db_results]
 
@@ -223,35 +222,35 @@ class RAGService:
 
         return None
 
-    def _get_db_results_by_intent(self, intent: str, question: str) -> List[Dict]:
+    async def _get_db_results_by_intent(self, intent: str, question: str) -> List[Dict]:
         """의도에 따른 DB 쿼리 실행"""
         try:
             if intent == "departure_status":
-                return self._query_departure_status(question)
+                return await self._query_departure_status(question)
             elif intent == "arrival_status":
-                return self._query_arrival_status(question)
+                return await self._query_arrival_status(question)
             elif intent == "schedule_change":
-                return self._query_schedule_changes(question)
+                return await self._query_schedule_changes(question)
             elif intent == "current_location":
-                return self._query_current_location(question)
+                return await self._query_current_location(question)
             elif intent == "lead_time":
-                return self._query_lead_time(question)
+                return await self._query_lead_time(question)
             elif intent == "transhipment":
-                return self._query_transhipment(question)
+                return await self._query_transhipment(question)
             else:
                 return []
         except Exception as e:
             print(f"DB 쿼리 오류: {e}")
             return []
 
-    def _query_departure_status(self, question: str) -> List[Dict]:
+    async def _query_departure_status(self, question: str) -> List[Dict]:
         """출항 상태 관련 쿼리"""
         # 특정 ID 검출 (예: H B/L, M B/L 등)
         hbl_id = self._extract_id_from_question(question, "hbl_no")
         mbl_id = self._extract_id_from_question(question, "mbl_no")
         lss_id = self._extract_id_from_question(question, "lss_id")
 
-        query = self.db.query(
+        stmt = select(
             LogisticsShipment.lss_id,
             LogisticsShipment.pol_nm,
             LogisticsShipment.pol_initial_etd,
@@ -262,23 +261,25 @@ class RAGService:
         )
 
         if hbl_id:
-            query = query.filter(LogisticsShipment.hbl_no == hbl_id)
+            stmt = stmt.where(LogisticsShipment.hbl_no == hbl_id)
         elif mbl_id:
-            query = query.filter(LogisticsShipment.mbl_no == mbl_id)
+            stmt = stmt.where(LogisticsShipment.mbl_no == mbl_id)
         elif lss_id:
-            query = query.filter(LogisticsShipment.lss_id == lss_id)
+            stmt = stmt.where(LogisticsShipment.lss_id == lss_id)
         else:
             # 특정 ID가 없는 경우 최근 10개 레코드만 반환
-            query = query.order_by(desc(LogisticsShipment.pol_atd)).limit(10)
+            stmt = stmt.order_by(desc(LogisticsShipment.pol_atd)).limit(10)
 
-        results = query.all()
-        return [dict(zip(r.keys(), r)) for r in results]
+        result = await self.db.execute(stmt)
+        rows = result.all()
+        return [dict(row._mapping) for row in rows]
 
-    def _query_arrival_status(self, question: str) -> List[Dict]:
+    async def _query_arrival_status(self, question: str) -> List[Dict]:
         """입항 상태 관련 쿼리"""
         # 유사한 패턴으로 구현
         hbl_id = self._extract_id_from_question(question, "hbl_no")
-        query = self.db.query(
+
+        stmt = select(
             LogisticsShipment.lss_id,
             LogisticsShipment.pod_nm,
             LogisticsShipment.pod_initial_eta,
@@ -288,17 +289,18 @@ class RAGService:
         )
 
         if hbl_id:
-            query = query.filter(LogisticsShipment.hbl_no == hbl_id)
+            stmt = stmt.where(LogisticsShipment.hbl_no == hbl_id)
         else:
-            query = query.order_by(desc(LogisticsShipment.pod_as_is_eta)).limit(10)
+            stmt = stmt.order_by(desc(LogisticsShipment.pod_as_is_eta)).limit(10)
 
-        results = query.all()
-        return [dict(zip(r.keys(), r)) for r in results]
+        result = await self.db.execute(stmt)
+        rows = result.all()
+        return [dict(row._mapping) for row in rows]
 
-    def _query_schedule_changes(self, question: str) -> List[Dict]:
+    async def _query_schedule_changes(self, question: str) -> List[Dict]:
         """스케줄 변경 관련 쿼리"""
         # 기본 필드 선택
-        query = self.db.query(
+        stmt = select(
             LogisticsShipment.lss_id,
             LogisticsShipment.pol_nm,
             LogisticsShipment.pod_nm,
@@ -308,32 +310,28 @@ class RAGService:
             LogisticsShipment.pod_initial_eta,
             LogisticsShipment.pod_as_is_eta,
             # 출항 지연 일수 계산
-            func.julianday(LogisticsShipment.pol_atd) -
-            func.julianday(LogisticsShipment.pol_initial_etd)
-            .label('departure_delay_days'),
+            (func.julianday(LogisticsShipment.pol_atd) -
+             func.julianday(LogisticsShipment.pol_initial_etd)).label('departure_delay_days'),
             # 예상 변경 일수 계산
-            func.julianday(LogisticsShipment.pod_as_is_eta) -
-            func.julianday(LogisticsShipment.pod_initial_eta)
-            .label('eta_change_days')
-        )
-
-        # 지연된 항목만 필터링
-        query = query.filter(
+            (func.julianday(LogisticsShipment.pod_as_is_eta) -
+             func.julianday(LogisticsShipment.pod_initial_eta)).label('eta_change_days')
+        ).where(
             or_(
                 LogisticsShipment.pol_atd > LogisticsShipment.pol_initial_etd,
                 LogisticsShipment.pod_as_is_eta > LogisticsShipment.pod_initial_eta
             )
         ).order_by(desc('departure_delay_days')).limit(10)
 
-        results = query.all()
-        return [dict(zip(r.keys(), r)) for r in results]
+        result = await self.db.execute(stmt)
+        rows = result.all()
+        return [dict(row._mapping) for row in rows]
 
-    def _query_current_location(self, question: str) -> List[Dict]:
+    async def _query_current_location(self, question: str) -> List[Dict]:
         """현재 위치 관련 쿼리"""
         hbl_id = self._extract_id_from_question(question, "hbl_no")
         lss_id = self._extract_id_from_question(question, "lss_id")
 
-        query = self.db.query(
+        stmt = select(
             LogisticsShipment.lss_id,
             LogisticsShipment.hbl_no,
             LogisticsShipment.current_status,
@@ -345,22 +343,23 @@ class RAGService:
         )
 
         if hbl_id:
-            query = query.filter(LogisticsShipment.hbl_no == hbl_id)
+            stmt = stmt.where(LogisticsShipment.hbl_no == hbl_id)
         elif lss_id:
-            query = query.filter(LogisticsShipment.lss_id == lss_id)
+            stmt = stmt.where(LogisticsShipment.lss_id == lss_id)
         else:
-            query = query.limit(10)
+            stmt = stmt.limit(10)
 
-        results = query.all()
-        return [dict(zip(r.keys(), r)) for r in results]
+        result = await self.db.execute(stmt)
+        rows = result.all()
+        return [dict(row._mapping) for row in rows]
 
-    def _query_lead_time(self, question: str) -> List[Dict]:
+    async def _query_lead_time(self, question: str) -> List[Dict]:
         """리드타임 관련 쿼리"""
         # 출발지/도착지 추출
         from_port = self._extract_location_from_question(question, "from")
         to_port = self._extract_location_from_question(question, "to")
 
-        query = self.db.query(
+        stmt = select(
             LogisticsShipment.lss_id,
             LogisticsShipment.from_site_name,
             LogisticsShipment.to_site_name,
@@ -368,13 +367,12 @@ class RAGService:
             LogisticsShipment.pod_nm,
             LogisticsShipment.lt_day_pol_atd_pod_initial_eta,
             LogisticsShipment.lt_day_pol_atd_pod_as_is_eta,
-            func.julianday(LogisticsShipment.pod_as_is_eta) -
-            func.julianday(LogisticsShipment.pol_atd)
-            .label('actual_leadtime_days')
+            (func.julianday(LogisticsShipment.pod_as_is_eta) -
+             func.julianday(LogisticsShipment.pol_atd)).label('actual_leadtime_days')
         )
 
         if from_port:
-            query = query.filter(
+            stmt = stmt.where(
                 or_(
                     LogisticsShipment.from_site_name.like(f"%{from_port}%"),
                     LogisticsShipment.pol_nm.like(f"%{from_port}%")
@@ -382,22 +380,23 @@ class RAGService:
             )
 
         if to_port:
-            query = query.filter(
+            stmt = stmt.where(
                 or_(
                     LogisticsShipment.to_site_name.like(f"%{to_port}%"),
                     LogisticsShipment.pod_nm.like(f"%{to_port}%")
                 )
             )
 
-        query = query.order_by(desc('actual_leadtime_days')).limit(10)
+        stmt = stmt.order_by(desc('actual_leadtime_days')).limit(10)
 
-        results = query.all()
-        return [dict(zip(r.keys(), r)) for r in results]
+        result = await self.db.execute(stmt)
+        rows = result.all()
+        return [dict(row._mapping) for row in rows]
 
-    def _query_transhipment(self, question: str) -> List[Dict]:
+    async def _query_transhipment(self, question: str) -> List[Dict]:
         """환적 관련 쿼리"""
         # 환적 여부 필터링
-        query = self.db.query(
+        stmt = select(
             LogisticsShipment.lss_id,
             LogisticsShipment.hbl_no,
             LogisticsShipment.ts_yn,
@@ -408,7 +407,7 @@ class RAGService:
             LogisticsShipment.pod_nm,
             LogisticsShipment.current_status,
             LogisticsShipment.current_location
-        ).filter(LogisticsShipment.ts_yn == True)
+        ).where(LogisticsShipment.ts_yn == True)
 
         # 특정 T/S 포트 검색
         ts_port = None
@@ -422,12 +421,13 @@ class RAGService:
         if ts_port:
             # 현재 모델에서는 T/S 포트를 직접 저장하는 필드가 없어
             # delivery_lane에 포함된 항구 정보를 검색
-            query = query.filter(LogisticsShipment.delivery_lane.like(f"%{ts_port}%"))
+            stmt = stmt.where(LogisticsShipment.delivery_lane.like(f"%{ts_port}%"))
 
-        query = query.limit(10)
+        stmt = stmt.limit(10)
 
-        results = query.all()
-        return [dict(zip(r.keys(), r)) for r in results]
+        result = await self.db.execute(stmt)
+        rows = result.all()
+        return [dict(row._mapping) for row in rows]
 
     def _extract_id_from_question(self, question: str, id_type: str) -> Optional[str]:
         """질문에서 식별자 추출 (간단한 구현)"""
@@ -479,27 +479,30 @@ class RAGService:
 
         return None
 
-    def get_shipment_by_id(self, lss_id: str) -> Optional[Dict[str, Any]]:
+    async def get_shipment_by_id(self, lss_id: str) -> Optional[Dict[str, Any]]:
         """배송 ID로 배송 정보 검색"""
-        result = self.db.query(LogisticsShipment).filter(
-            LogisticsShipment.lss_id == lss_id
-        ).first()
+        stmt = select(LogisticsShipment).where(LogisticsShipment.lss_id == lss_id)
+        result = await self.db.execute(stmt)
+        shipment = result.scalars().first()
 
-        if result:
-            return {c.name: getattr(result, c.name) for c in result.__table__.columns}
+        if shipment:
+            return {c.name: getattr(shipment, c.name) for c in shipment.__table__.columns}
         return None
 
-    def get_shipments_by_status(self, status: str, limit: int = 10) -> List[Dict[str, Any]]:
+    async def get_shipments_by_status(self, status: str, limit: int = 10) -> List[Dict[str, Any]]:
         """상태별 배송 정보 검색"""
-        results = self.db.query(LogisticsShipment).filter(
+        stmt = select(LogisticsShipment).where(
             LogisticsShipment.current_status == status
-        ).limit(limit).all()
+        ).limit(limit)
 
-        return [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in results]
+        result = await self.db.execute(stmt)
+        shipments = result.scalars().all()
 
-    def get_delayed_shipments(self, days_threshold: int = 1) -> List[Dict[str, Any]]:
+        return [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in shipments]
+
+    async def get_delayed_shipments(self, days_threshold: int = 1) -> List[Dict[str, Any]]:
         """지연된 배송 정보 검색"""
-        results = self.db.query(LogisticsShipment).filter(
+        stmt = select(LogisticsShipment).where(
             or_(
                 # 출항 지연
                 and_(
@@ -516,25 +519,29 @@ class RAGService:
                     func.julianday(LogisticsShipment.pod_initial_eta) > days_threshold
                 )
             )
-        ).all()
+        )
 
-        return [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in results]
+        result = await self.db.execute(stmt)
+        shipments = result.scalars().all()
 
-    def get_transhipment_shipments(self) -> List[Dict[str, Any]]:
+        return [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in shipments]
+
+    async def get_transhipment_shipments(self) -> List[Dict[str, Any]]:
         """T/S 배송 정보 검색"""
-        results = self.db.query(LogisticsShipment).filter(
-            LogisticsShipment.ts_yn == True
-        ).all()
+        stmt = select(LogisticsShipment).where(LogisticsShipment.ts_yn == True)
 
-        return [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in results]
+        result = await self.db.execute(stmt)
+        shipments = result.scalars().all()
 
-    def calculate_port_delay_statistics(self, port_name: str, months: int = 3) -> Dict[str, Any]:
+        return [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in shipments]
+
+    async def calculate_port_delay_statistics(self, port_name: str, months: int = 3) -> Dict[str, Any]:
         """특정 항구의 지연 통계 계산"""
         # 기준 날짜 계산 (현재 날짜로부터 X개월 전)
         cutoff_date = datetime.now() - timedelta(days=30 * months)
 
         # 출항 지연 통계
-        departure_stats = self.db.query(
+        departure_stmt = select(
             func.avg(
                 func.julianday(LogisticsShipment.pol_atd) -
                 func.julianday(LogisticsShipment.pol_initial_etd)
@@ -547,13 +554,16 @@ class RAGService:
                 func.julianday(LogisticsShipment.pol_atd) -
                 func.julianday(LogisticsShipment.pol_initial_etd)
             ).label('min_departure_delay')
-        ).filter(
+        ).where(
             LogisticsShipment.pol_nm.like(f"%{port_name}%"),
             LogisticsShipment.pol_atd >= cutoff_date
-        ).first()
+        )
+
+        departure_result = await self.db.execute(departure_stmt)
+        departure_stats = departure_result.first()
 
         # 도착 지연 통계
-        arrival_stats = self.db.query(
+        arrival_stmt = select(
             func.avg(
                 func.julianday(LogisticsShipment.pod_as_is_eta) -
                 func.julianday(LogisticsShipment.pod_initial_eta)
@@ -566,25 +576,28 @@ class RAGService:
                 func.julianday(LogisticsShipment.pod_as_is_eta) -
                 func.julianday(LogisticsShipment.pod_initial_eta)
             ).label('min_arrival_delay')
-        ).filter(
+        ).where(
             LogisticsShipment.pod_nm.like(f"%{port_name}%"),
             LogisticsShipment.pod_as_is_eta >= cutoff_date
-        ).first()
+        )
+
+        arrival_result = await self.db.execute(arrival_stmt)
+        arrival_stats = arrival_result.first()
 
         return {
             "port_name": port_name,
             "period_months": months,
-            "departure_stats": dict(zip(departure_stats.keys(), departure_stats)) if departure_stats else {},
-            "arrival_stats": dict(zip(arrival_stats.keys(), arrival_stats)) if arrival_stats else {}
+            "departure_stats": dict(departure_stats._mapping) if departure_stats else {},
+            "arrival_stats": dict(arrival_stats._mapping) if arrival_stats else {}
         }
 
-    def calculate_carrier_performance(
+    async def calculate_carrier_performance(
             self, carrier_name: str = None, months: int = 3
     ) -> List[Dict[str, Any]]:
         """선사별 성능 통계 계산"""
         cutoff_date = datetime.now() - timedelta(days=30 * months)
 
-        query = self.db.query(
+        stmt = select(
             LogisticsShipment.carrier_nm,
             func.count(LogisticsShipment.id).label('shipment_count'),
             func.avg(
@@ -600,23 +613,24 @@ class RAGService:
                     else_=0
                 )
             ).label('departure_ontime_rate')
-        ).filter(
+        ).where(
             LogisticsShipment.pol_atd >= cutoff_date
         ).group_by(LogisticsShipment.carrier_nm)
 
         if carrier_name:
-            query = query.filter(LogisticsShipment.carrier_nm.like(f"%{carrier_name}%"))
+            stmt = stmt.where(LogisticsShipment.carrier_nm.like(f"%{carrier_name}%"))
 
-        results = query.all()
-        return [dict(zip(r.keys(), r)) for r in results]
+        result = await self.db.execute(stmt)
+        rows = result.all()
+        return [dict(row._mapping) for row in rows]
 
-    def calculate_route_performance(
+    async def calculate_route_performance(
             self, from_port: str = None, to_port: str = None, months: int = 3
     ) -> List[Dict[str, Any]]:
         """경로별 성능 통계 계산"""
         cutoff_date = datetime.now() - timedelta(days=30 * months)
 
-        query = self.db.query(
+        stmt = select(
             LogisticsShipment.pol_nm,
             LogisticsShipment.pod_nm,
             LogisticsShipment.ts_yn,
@@ -638,7 +652,7 @@ class RAGService:
                     else_=0
                 )
             ).label('arrival_ontime_rate')
-        ).filter(
+        ).where(
             LogisticsShipment.pol_atd >= cutoff_date
         ).group_by(
             LogisticsShipment.pol_nm,
@@ -647,21 +661,22 @@ class RAGService:
         )
 
         if from_port:
-            query = query.filter(LogisticsShipment.pol_nm.like(f"%{from_port}%"))
+            stmt = stmt.where(LogisticsShipment.pol_nm.like(f"%{from_port}%"))
 
         if to_port:
-            query = query.filter(LogisticsShipment.pod_nm.like(f"%{to_port}%"))
+            stmt = stmt.where(LogisticsShipment.pod_nm.like(f"%{to_port}%"))
 
-        results = query.all()
-        return [dict(zip(r.keys(), r)) for r in results]
+        result = await self.db.execute(stmt)
+        rows = result.all()
+        return [dict(row._mapping) for row in rows]
 
-    def weekly_performance_trend(
+    async def weekly_performance_trend(
             self, from_port: str = None, to_port: str = None, weeks: int = 12
     ) -> List[Dict[str, Any]]:
         """주간 성능 추이 계산"""
         cutoff_date = datetime.now() - timedelta(days=7 * weeks)
 
-        query = self.db.query(
+        stmt = select(
             LogisticsShipment.pol_etd_week,
             func.count(LogisticsShipment.id).label('shipment_count'),
             func.avg(
@@ -680,45 +695,21 @@ class RAGService:
                     else_=0
                 )
             ).label('overall_ontime_rate')
-        ).filter(
+        ).where(
             LogisticsShipment.pol_atd >= cutoff_date
         ).group_by(
             LogisticsShipment.pol_etd_week
         ).order_by(LogisticsShipment.pol_etd_week)
 
         if from_port:
-            query = query.filter(LogisticsShipment.pol_nm.like(f"%{from_port}%"))
+            stmt = stmt.where(LogisticsShipment.pol_nm.like(f"%{from_port}%"))
 
         if to_port:
-            query = query.filter(LogisticsShipment.pod_nm.like(f"%{to_port}%"))
+            stmt = stmt.where(LogisticsShipment.pod_nm.like(f"%{to_port}%"))
 
-        results = query.all()
-        return [dict(zip(r.keys(), r)) for r in results]
-
-    def update_vector_store(self, shipment_id: str = None):
-        """벡터 스토어 업데이트"""
-        if shipment_id:
-            # 특정 배송 정보만 업데이트
-            shipment = self.get_shipment_by_id(shipment_id)
-            if not shipment:
-                return {"status": "error", "message": f"배송 ID {shipment_id}를 찾을 수 없습니다."}
-
-            documents = [self._shipment_to_document(shipment)]
-        else:
-            # 전체 배송 정보 업데이트
-            shipments = self.db.query(LogisticsShipment).all()
-            documents = [self._shipment_to_document(
-                {c.name: getattr(s, c.name) for c in s.__table__.columns}
-            ) for s in shipments]
-
-        # 벡터 스토어에 문서 추가
-        self.vector_store.add_documents(documents)
-        self.vector_store.persist()
-
-        return {
-            "status": "success",
-            "message": f"{len(documents)}개 문서가 벡터 스토어에 업데이트되었습니다."
-        }
+        result = await self.db.execute(stmt)
+        rows = result.all()
+        return [dict(row._mapping) for row in rows]
 
     def _shipment_to_document(self, shipment: Dict[str, Any]) -> Document:
         """배송 정보를 문서로 변환"""
@@ -794,3 +785,31 @@ class RAGService:
                 "to_site": shipment.get('to_site_name', '')
             }
         )
+
+    async def update_vector_store(self, shipment_id: str = None):
+        """벡터 스토어 업데이트"""
+        if shipment_id:
+            # 특정 배송 정보만 업데이트
+            shipment = await self.get_shipment_by_id(shipment_id)
+            if not shipment:
+                return {"status": "error", "message": f"배송 ID {shipment_id}를 찾을 수 없습니다."}
+
+            documents = [self._shipment_to_document(shipment)]
+        else:
+            # 전체 배송 정보 업데이트
+            stmt = select(LogisticsShipment)
+            result = await self.db.execute(stmt)
+            shipments = result.scalars().all()
+
+            documents = [self._shipment_to_document(
+                {c.name: getattr(s, c.name) for c in s.__table__.columns}
+            ) for s in shipments]
+
+        # 벡터 스토어에 문서 추가
+        self.vector_store.add_documents(documents)
+        self.vector_store.persist()
+
+        return {
+            "status": "success",
+            "message": f"{len(documents)}개 문서가 벡터 스토어에 업데이트되었습니다."
+        }
