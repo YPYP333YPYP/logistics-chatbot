@@ -1,4 +1,5 @@
 import asyncio
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -14,6 +15,7 @@ async def lifespan(app: FastAPI):
     """FastAPI lifespan event handler"""
     try:
         await init_db()  # ✅ DB 초기화 실행
+        os.environ["USE_CUDA"] = "1" if os.path.exists("/dev/nvidia0") else "0"
 
     except Exception as e:
         yield
